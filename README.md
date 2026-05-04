@@ -40,7 +40,7 @@ Perfect if you want to understand each part:
 
 2. **[BACKEND_SETUP.md](./docs/BACKEND_SETUP.md)** (10 min)
    - Build .NET 8 API
-   - Create models and controllers
+   - Create model, DTOs, service layer, and controller
    - Understand REST APIs
 
 3. **[FRONTEND_SETUP.md](./docs/FRONTEND_SETUP.md)** (10 min)
@@ -67,8 +67,10 @@ Simple and clean:
 project/
 ├── backend/
 │   └── DotNetApi/              # .NET 8 API
-│       ├── Models/              # Data structure
-│       ├── Controllers/         # API endpoints  
+│       ├── Models/              # Database entities
+│       ├── DTOs/                # API request/response shapes
+│       ├── Services/            # Business/data logic
+│       ├── Controllers/         # API endpoints
 │       ├── Data/                # Database connection
 │       └── Program.cs           # Main configuration
 │
@@ -97,6 +99,8 @@ project/
 | Feature | Beginner Version | Advanced Version |
 |---------|------------------|------------------|
 | **Database Model** | 1 table (Products) | Multiple related tables |
+| **API Shape** | DTOs for create/update/response | Entities may have many API-specific views |
+| **Backend Flow** | Controller → Service → DbContext | More layers and contracts |
 | **Complexity** | Simple CRUD | Complex relationships |
 | **Explanation** | Very detailed | Brief |
 | **Code Comments** | Extensive | Minimal |
@@ -131,7 +135,7 @@ cd backend/DotNetApi
 dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
 dotnet add package Microsoft.EntityFrameworkCore.Design
 dotnet add package Microsoft.EntityFrameworkCore.Tools
-# (Copy files from BACKEND_SETUP.md)
+# (Copy model, DTO, service, controller, and config files from BACKEND_SETUP.md)
 dotnet run
 
 # Terminal 3: Frontend
@@ -191,6 +195,8 @@ Then open: `http://localhost:3000`
 - Status codes
 - JSON format
 - CORS
+- DTOs vs. database models
+- Controller/service separation
 
 ### React Concepts
 - Components
@@ -348,6 +354,11 @@ After working through this template, you'll be able to:
 
 **Backend (.NET):**
 - Models/Product.cs
+- DTOs/CreateProductDto.cs
+- DTOs/UpdateProductDto.cs
+- DTOs/ProductResponseDto.cs
+- Services/IProductService.cs
+- Services/ProductService.cs
 - Data/AppDbContext.cs
 - Controllers/ProductsController.cs
 - Program.cs

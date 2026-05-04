@@ -26,6 +26,8 @@ This guide includes comprehensive documentation designed for **easy learning**:
 2. **[BACKEND_SETUP.md](./docs/BACKEND_SETUP.md)** - .NET 8 API (10 min)
    - Create .NET project
    - One simple model: Product
+   - DTOs for create, update, and response data
+   - Product service layer between controller and database
    - Build REST API (GET, POST, PUT, DELETE)
    - Connect to PostgreSQL
    - Test with Swagger UI
@@ -71,11 +73,18 @@ web-app/
 ├── backend/
 │   └── DotNetApi/
 │       ├── Models/
-│       │   └── Product.cs              # ONE Simple Model
+│       │   └── Product.cs              # Database Entity
+│       ├── DTOs/
+│       │   ├── CreateProductDto.cs     # POST Request Shape
+│       │   ├── UpdateProductDto.cs     # PUT Request Shape
+│       │   └── ProductResponseDto.cs   # API Response Shape
+│       ├── Services/
+│       │   ├── IProductService.cs      # Service Contract
+│       │   └── ProductService.cs       # Product Logic + Mapping
 │       ├── Data/
 │       │   └── AppDbContext.cs         # Database Connection
 │       ├── Controllers/
-│       │   └── ProductsController.cs   # API Endpoints
+│       │   └── ProductsController.cs   # HTTP Endpoints
 │       ├── Migrations/                 # Database Changes
 │       ├── Program.cs                  # Configuration
 │       ├── appsettings.json           # Connection String
@@ -119,7 +128,9 @@ web-app/
 
 | Old Version | New Version | Why? |
 |------------|------------|------|
-| 2 models (Employee + Department) | 1 model (Product) | Easier to understand relationships |
+| Multiple related models | 1 model (`Product`) | Easier to understand the first CRUD flow |
+| Controller talks directly to DbContext | Controller uses ProductService | Cleaner beginner-friendly layering |
+| API accepts database entities | API accepts DTOs | Safer request/response boundaries |
 | Complex relationships | Single table | Focus on fundamentals |
 | Long code examples | Shorter, simpler code | Less overwhelming |
 | Brief explanations | Detailed explanations | Learn the WHY |

@@ -20,10 +20,12 @@ psql --version           # Should show 13.x or higher
 
 A simple REST API with:
 - **1 Model**: `Product` (name, description, price)
-- **1 Controller**: Handle GET, POST, PUT, DELETE
+- **3 DTOs**: Safe request/response shapes for products
+- **1 Service Layer**: Product business/data logic
+- **1 Controller**: Handles GET, POST, PUT, DELETE by calling the service
 - **1 Database**: PostgreSQL stores the data
 
-Think of it like: Database ↔ Backend API ↔ Frontend
+Think of it like: PostgreSQL ↔ EF Core DbContext ↔ ProductService ↔ ProductsController ↔ React
 
 ---
 
@@ -85,8 +87,8 @@ namespace DotNetApi.Models
     {
         // Properties (columns in database)
         public int Id { get; set; }              // Primary key
-        public string Name { get; set; }         // Product name
-        public string Description { get; set; } // Product details
+        public string Name { get; set; } = string.Empty;        // Product name
+        public string Description { get; set; } = string.Empty; // Product details
         public decimal Price { get; set; }      // Product cost
     }
 }
@@ -166,7 +168,176 @@ Replace it with:
 
 ---
 
-## Step 6: Configure Program.cs (The Brain)
+## Step 6: Create DTOs
+
+DTO means **Data Transfer Object**. DTOs describe the data that enters and leaves the API. The database model stays in `Models/Product.cs`; the API request/response shapes live in `DTOs/`.
+
+Create a new folder: `DTOs/`
+
+Create file: `DTOs/CreateProductDto.cs`
+
+```csharp
+namespace DotNetApi.DTOs
+{
+    public class CreateProductDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+    }
+}
+```
+
+Create file: `DTOs/UpdateProductDto.cs`
+
+```csharp
+namespace DotNetApi.DTOs
+{
+    public class UpdateProductDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+    }
+}
+```
+
+Create file: `DTOs/ProductResponseDto.cs`
+
+```csharp
+namespace DotNetApi.DTOs
+{
+    public class ProductResponseDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+    }
+}
+```
+
+**Why this helps:**
+- Create/update requests do not send `Id`; PostgreSQL generates it.
+- Controllers no longer expose the database entity directly.
+- Later, you can add fields to `Product` without automatically exposing them through the API.
+
+---
+
+## Step 7: Create the Product Service
+
+Services hold the work that used to live directly inside the controller. The controller stays focused on HTTP responses, while the service handles database access and DTO mapping.
+
+Create a new folder: `Services/`
+
+Create file: `Services/IProductService.cs`
+
+```csharp
+using DotNetApi.DTOs;
+
+namespace DotNetApi.Services
+{
+    public interface IProductService
+    {
+        List<ProductResponseDto> GetAll();
+        ProductResponseDto? GetById(int id);
+        ProductResponseDto Create(CreateProductDto dto);
+        ProductResponseDto? Update(int id, UpdateProductDto dto);
+        bool Delete(int id);
+    }
+}
+```
+
+Create file: `Services/ProductService.cs`
+
+```csharp
+using DotNetApi.Data;
+using DotNetApi.DTOs;
+using DotNetApi.Models;
+
+namespace DotNetApi.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly AppDbContext _context;
+
+        public ProductService(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public List<ProductResponseDto> GetAll()
+        {
+            return _context.Products
+                .Select(product => ToResponseDto(product))
+                .ToList();
+        }
+
+        public ProductResponseDto? GetById(int id)
+        {
+            var product = _context.Products.Find(id);
+            return product == null ? null : ToResponseDto(product);
+        }
+
+        public ProductResponseDto Create(CreateProductDto dto)
+        {
+            var product = new Product
+            {
+                Name = dto.Name,
+                Description = dto.Description,
+                Price = dto.Price
+            };
+
+            _context.Products.Add(product);
+            _context.SaveChanges();
+
+            return ToResponseDto(product);
+        }
+
+        public ProductResponseDto? Update(int id, UpdateProductDto dto)
+        {
+            var product = _context.Products.Find(id);
+            if (product == null)
+                return null;
+
+            product.Name = dto.Name;
+            product.Description = dto.Description;
+            product.Price = dto.Price;
+
+            _context.SaveChanges();
+
+            return ToResponseDto(product);
+        }
+
+        public bool Delete(int id)
+        {
+            var product = _context.Products.Find(id);
+            if (product == null)
+                return false;
+
+            _context.Products.Remove(product);
+            _context.SaveChanges();
+
+            return true;
+        }
+
+        private static ProductResponseDto ToResponseDto(Product product)
+        {
+            return new ProductResponseDto
+            {
+                Id = product.Id,
+                Name = product.Name,
+                Description = product.Description,
+                Price = product.Price
+            };
+        }
+    }
+}
+```
+
+---
+
+## Step 8: Configure Program.cs (The Brain)
 
 Open file: `Program.cs`
 
@@ -175,44 +346,39 @@ Replace all content with:
 ```csharp
 using Microsoft.EntityFrameworkCore;
 using DotNetApi.Data;
+using DotNetApi.Services;
 
 // Builder = Sets up the API
-var builder = WebApplicationBuilder.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
 
 // Add services (things the API needs)
 builder.Services.AddControllers();
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowReact", b =>
-    {
-        // Allow React to talk to this API
-        b.WithOrigins("http://localhost:3000")
-         .AllowAnyMethod()
-         .AllowAnyHeader();
-    });
-});
-
-// Add Swagger (nice documentation UI)
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
 
 // Connect to PostgreSQL database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"))
 );
 
+// Register the product service for dependency injection
+builder.Services.AddScoped<IProductService, ProductService>();
+
+// Add Swagger (nice documentation UI)
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Add CORS support
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", b =>
+    {
+        b.AllowAnyOrigin()
+         .AllowAnyMethod()
+         .AllowAnyHeader();
+    });
+});
+
 // Build the app
 var app = builder.Build();
-
-// Create database tables if they don't exist
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate(); // Runs migrations (creates tables)
-}
-
-// Use CORS (allow React to connect)
-app.UseCors("AllowReact");
 
 // Enable Swagger UI
 if (app.Environment.IsDevelopment())
@@ -222,6 +388,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors("AllowAll");
 app.UseAuthorization();
 app.MapControllers();
 
@@ -230,20 +397,21 @@ app.Run();
 
 **What each part does:**
 - `AddControllers()` - Enables API routes
-- `AddCors()` - Allows React (on port 3000) to connect
 - `AddDbContext()` - Connects to PostgreSQL
-- `db.Database.Migrate()` - Creates database tables
+- `AddScoped<IProductService, ProductService>()` - Lets controllers ask for the product service
+- `AddCors()` - Allows the React app to connect
 - `UseSwagger()` - Enables interactive API documentation
 
 ---
 
-## Step 7: Create Migrations (Database Setup)
+## Step 9: Create Migrations (Database Setup)
 
 Migrations = Instructions for creating database tables
 
 ```bash
 # Create a migration (instructions for first database setup)
 dotnet ef migrations add InitialCreate
+dotnet ef database update
 
 # What to expect:
 # - Creates a "Migrations" folder
@@ -253,15 +421,14 @@ dotnet ef migrations add InitialCreate
 
 ---
 
-## Step 8: Create the API Controller
+## Step 10: Create the API Controller
 
 Create file: `Controllers/ProductsController.cs`
 
 ```csharp
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using DotNetApi.Data;
-using DotNetApi.Models;
+using DotNetApi.DTOs;
+using DotNetApi.Services;
 
 namespace DotNetApi.Controllers
 {
@@ -270,120 +437,68 @@ namespace DotNetApi.Controllers
     [Route("api/[controller]")]
     public class ProductsController : ControllerBase
     {
-        // _context = our database connection
-        private readonly AppDbContext _context;
+        private readonly IProductService _productService;
 
-        // Constructor - gets database from dependency injection
-        public ProductsController(AppDbContext context)
+        public ProductsController(IProductService productService)
         {
-            _context = context;
+            _productService = productService;
         }
 
         // GET /api/products
-        // Gets ALL products from database
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<Product>>> GetProducts()
+        public IActionResult GetAll()
         {
-            // Fetch all products
-            var products = await _context.Products.ToListAsync();
-            return Ok(products); // Return 200 OK with products
+            var products = _productService.GetAll();
+            return Ok(products);
         }
 
         // GET /api/products/5
-        // Gets ONE product by ID
         [HttpGet("{id}")]
-        public async Task<ActionResult<Product>> GetProduct(int id)
+        public IActionResult GetById(int id)
         {
-            // Find product with this ID
-            var product = await _context.Products.FindAsync(id);
-
-            // If not found, return 404 Not Found
+            var product = _productService.GetById(id);
             if (product == null)
-            {
                 return NotFound();
-            }
 
-            // Return 200 OK with the product
             return Ok(product);
         }
 
         // POST /api/products
-        // Creates a NEW product
         [HttpPost]
-        public async Task<ActionResult<Product>> CreateProduct(Product product)
+        public IActionResult Create([FromBody] CreateProductDto dto)
         {
-            // Add product to database
-            _context.Products.Add(product);
+            if (dto == null)
+                return BadRequest();
 
-            // Save changes to database
-            await _context.SaveChangesAsync();
+            var product = _productService.Create(dto);
 
-            // Return 201 Created with the new product
-            return CreatedAtAction(nameof(GetProduct), 
+            return CreatedAtAction(nameof(GetById),
                 new { id = product.Id }, product);
         }
 
         // PUT /api/products/5
-        // Updates an EXISTING product
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateProduct(int id, Product product)
+        public IActionResult Update(int id, [FromBody] UpdateProductDto dto)
         {
-            // Check if ID matches
-            if (id != product.Id)
-            {
-                return BadRequest(); // Return 400 Bad Request
-            }
+            if (dto == null)
+                return BadRequest();
 
-            // Mark product as modified
-            _context.Entry(product).State = EntityState.Modified;
+            var product = _productService.Update(id, dto);
+            if (product == null)
+                return NotFound();
 
-            try
-            {
-                // Save changes to database
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                // If error, check if product exists
-                if (!await ProductExists(id))
-                {
-                    return NotFound(); // Not found
-                }
-                throw; // Re-throw other errors
-            }
-
-            // Return 204 No Content (success, no body needed)
-            return NoContent();
+            return Ok(product);
         }
 
         // DELETE /api/products/5
-        // Deletes a product
         [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteProduct(int id)
+        public IActionResult Delete(int id)
         {
-            // Find the product
-            var product = await _context.Products.FindAsync(id);
-
-            // If not found, return 404
-            if (product == null)
-            {
+            var deleted = _productService.Delete(id);
+            if (!deleted)
                 return NotFound();
-            }
 
-            // Remove from database
-            _context.Products.Remove(product);
-
-            // Save changes
-            await _context.SaveChangesAsync();
-
-            // Return 204 No Content
             return NoContent();
-        }
-
-        // Helper method: Check if product exists
-        private async Task<bool> ProductExists(int id)
-        {
-            return await _context.Products.AnyAsync(p => p.Id == id);
         }
     }
 }
@@ -398,7 +513,7 @@ namespace DotNetApi.Controllers
 
 ---
 
-## Step 9: Setup the Database
+## Step 11: Setup the Database
 
 First, create the database in PostgreSQL:
 
@@ -415,7 +530,7 @@ CREATE DATABASE dotnet_db;
 
 ---
 
-## Step 10: Run the API
+## Step 12: Run the API
 
 ```bash
 # Inside DotNetApi folder
@@ -430,7 +545,7 @@ dotnet run
 
 ---
 
-## Step 11: Test Your API
+## Step 13: Test Your API
 
 ### Option 1: Swagger UI (Easiest)
 
@@ -465,7 +580,6 @@ curl https://localhost:7000/api/products/1
 curl -X PUT https://localhost:7000/api/products/1 \
   -H "Content-Type: application/json" \
   -d '{
-    "id": 1,
     "name": "Gaming Laptop",
     "description": "High-end gaming",
     "price": 1500.00
@@ -496,13 +610,15 @@ SELECT * FROM "Products";
    ↓
 3. ProductsController receives request
    ↓
-4. Controller queries database: SELECT * FROM Products WHERE Id = 1;
+4. Controller asks ProductService for the product
    ↓
-5. Database returns the product
+5. ProductService queries the database through AppDbContext
    ↓
-6. Controller returns JSON: { "id": 1, "name": "Laptop", ... }
+6. ProductService maps Product to ProductResponseDto
    ↓
-7. React receives JSON and displays it
+7. Controller returns JSON: { "id": 1, "name": "Laptop", ... }
+   ↓
+8. React receives JSON and displays it
 ```
 
 ---
@@ -526,7 +642,7 @@ dotnet ef database update
 
 ### Error: "CORS error" (React can't connect)
 - Check React is on port 3000
-- Check Program.cs has `.WithOrigins("http://localhost:3000")`
+- Check Program.cs has `app.UseCors("AllowAll")`
 
 ### Error: "Port 7000 already in use"
 ```bash
@@ -544,6 +660,8 @@ kill -9 <PID>
 ✅ Created a .NET project
 ✅ Set up Entity Framework Core
 ✅ Created a database model
+✅ Added DTOs for request/response data
+✅ Added a service layer between controller and database
 ✅ Built a REST API controller
 ✅ Connected to PostgreSQL
 ✅ Tested all CRUD operations
@@ -555,7 +673,9 @@ kill -9 <PID>
 ## Key Concepts
 
 **Model** = What we store (Product with Name, Price, etc.)
-**Controller** = How we access it (GET, POST, PUT, DELETE)
+**DTO** = What the API accepts or returns
+**Service** = Business/data logic between controller and database
+**Controller** = HTTP endpoint layer (GET, POST, PUT, DELETE)
 **DbContext** = Connection to database
 **Migration** = Instructions for database changes
 **REST API** = Standard way to communicate over HTTP

@@ -100,8 +100,8 @@ namespace DotNetApi.Models
     public class Product
     {
         public int Id { get; set; }
-        public string Name { get; set; }
-        public string Description { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
         public decimal Price { get; set; }
     }
 }
@@ -147,36 +147,30 @@ Replace `yourpassword` with your PostgreSQL password!
 ```csharp
 using Microsoft.EntityFrameworkCore;
 using DotNetApi.Data;
+using DotNetApi.Services;
 
-var builder = WebApplicationBuilder.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"))
+);
+builder.Services.AddScoped<IProductService, ProductService>();
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReact", b =>
+    options.AddPolicy("AllowAll", b =>
     {
-        b.WithOrigins("http://localhost:3000")
+        b.AllowAnyOrigin()
          .AllowAnyMethod()
          .AllowAnyHeader();
     });
 });
 
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"))
-);
-
 var app = builder.Build();
-
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
-}
-
-app.UseCors("AllowReact");
 
 if (app.Environment.IsDevelopment())
 {
@@ -185,10 +179,22 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors("AllowAll");
 app.UseAuthorization();
 app.MapControllers();
 app.Run();
 ```
+
+### Add DTOs and Service Layer
+
+Create these backend files too:
+- `DTOs/CreateProductDto.cs`
+- `DTOs/UpdateProductDto.cs`
+- `DTOs/ProductResponseDto.cs`
+- `Services/IProductService.cs`
+- `Services/ProductService.cs`
+
+See [BACKEND_SETUP.md](./BACKEND_SETUP.md) Steps 6 and 7 for the full code. These files keep the controller clean and prevent the API from accepting or returning database entities directly.
 
 ### Create Controller
 
@@ -362,6 +368,13 @@ kill -9 <PID>
 ```
 DotNetApi/
 ├── Models/Product.cs
+├── DTOs/
+│   ├── CreateProductDto.cs
+│   ├── UpdateProductDto.cs
+│   └── ProductResponseDto.cs
+├── Services/
+│   ├── IProductService.cs
+│   └── ProductService.cs
 ├── Data/AppDbContext.cs
 ├── Controllers/ProductsController.cs
 ├── Program.cs
@@ -462,362 +475,7 @@ pg_dump -U postgres -d dotnet_db    # Backup
 
 ---
 
-**Next**: [Full Tutorials](../../SETUP_GUIDE.md)
-
-## Prerequisites Check
-
-Before starting, ensure you have installed:
-
-```bash
-# Check versions
-node --version          # Should be 18+
-npm --version           # Should be 8+
-dotnet --version        # Should be 8.0+
-psql --version          # Should be 13+
-```
-
----
-
-## Step 1: Setup Database (5 minutes)
-
-### Start PostgreSQL
-```bash
-# macOS
-brew services start postgresql
-
-# Windows
-net start postgresql
-
-# Linux
-sudo systemctl start postgresql
-```
-
-### Create Database
-```bash
-psql -U postgres
-
--- Inside psql:
-CREATE DATABASE net_app_db;
-CREATE USER app_user WITH PASSWORD 'secure_password_123';
-ALTER ROLE app_user SET client_encoding TO 'utf8';
-ALTER ROLE app_user SET default_transaction_isolation TO 'read committed';
-GRANT ALL PRIVILEGES ON DATABASE net_app_db TO app_user;
-\q
-```
-
----
-
-## Step 2: Setup Backend (10 minutes)
-
-### Create .NET Project
-```bash
-cd backend
-dotnet new webapi -n DotNetApi -f net8.0
-cd DotNetApi
-```
-
-### Add NuGet Packages
-```bash
-dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
-dotnet add package Microsoft.EntityFrameworkCore.Design
-dotnet add package Microsoft.EntityFrameworkCore.Tools
-```
-
-### Copy Configuration Files
-
-From the documentation:
-- Copy `Program.cs` configuration
-- Copy `appsettings.json` with your connection string
-- Copy all files from `Models/`, `Data/`, and `Controllers/` directories
-
-### Run Migrations
-```bash
-dotnet ef migrations add InitialCreate
-dotnet ef database update
-```
-
-### Verify Backend Works
-```bash
-dotnet run
-# Visit: https://localhost:7000/swagger
-```
-
----
-
-## Step 3: Setup Frontend (10 minutes)
-
-### Create React App
-```bash
-cd frontend
-npx create-react-app react-app
-cd react-app
-npm install axios react-router-dom
-```
-
-### Environment Configuration
-Create `.env.local`:
-```
-REACT_APP_API_BASE_URL=http://localhost:7000/api
-```
-
-### Copy React Files
-
-From the documentation:
-- Copy `src/services/api.js`
-- Copy `src/hooks/` directory
-- Copy `src/components/` directory
-- Copy updated `src/App.js` and `src/App.css`
-
-### Start Frontend
-```bash
-npm start
-# Opens at http://localhost:3000
-```
-
----
-
-## Step 4: Test the Application (5 minutes)
-
-### Add Sample Employee
-1. Open React app at `http://localhost:3000`
-2. Fill in the "Add New Employee" form
-3. Select a department
-4. Click "Add Employee"
-
-### Verify in Database
-```bash
-psql -U app_user -d net_app_db
-
-SELECT * FROM "Employees";
-SELECT * FROM "Departments";
-
-\q
-```
-
-### Check API Directly
-```bash
-# Get all employees
-curl http://localhost:7000/api/employees
-
-# Get all departments
-curl http://localhost:7000/api/departments
-```
-
----
-
-## Troubleshooting
-
-### React App Won't Connect to Backend
-- ✓ Check backend is running: `dotnet run`
-- ✓ Verify CORS is configured in `Program.cs`
-- ✓ Check `REACT_APP_API_BASE_URL` in `.env.local`
-- ✓ Restart React dev server: Ctrl+C, then `npm start`
-
-### Database Connection Failed
-- ✓ PostgreSQL running? `psql --version`
-- ✓ Connection string correct in `appsettings.json`?
-- ✓ Database exists? `psql -U postgres -l`
-- ✓ User has permissions? Run GRANT commands again
-
-### Network Request Errors
-```javascript
-// Check network tab in browser DevTools (F12)
-// Common issues:
-// - CORS error: Update origin in Program.cs
-// - 404 Not Found: Check API route names
-// - 500 Server Error: Check .NET terminal for error messages
-```
-
-### Port Already in Use
-```bash
-# Port 3000 (React)
-lsof -i :3000
-kill -9 <PID>
-
-# Port 7000 (.NET)
-lsof -i :7000
-kill -9 <PID>
-
-# Port 5432 (PostgreSQL)
-lsof -i :5432
-kill -9 <PID>
-```
-
----
-
-## Project Structure After Setup
-
-```
-project-root/
-├── backend/
-│   └── DotNetApi/
-│       ├── Controllers/
-│       │   ├── EmployeesController.cs
-│       │   └── DepartmentsController.cs
-│       ├── Models/
-│       │   ├── Employee.cs
-│       │   └── Department.cs
-│       ├── Data/
-│       │   └── AppDbContext.cs
-│       ├── Migrations/
-│       ├── Program.cs
-│       ├── appsettings.json
-│       └── DotNetApi.csproj
-│
-├── frontend/
-│   └── react-app/
-│       ├── public/
-│       ├── src/
-│       │   ├── components/
-│       │   │   ├── EmployeeList.js
-│       │   │   ├── EmployeeForm.js
-│       │   │   └── *.css
-│       │   ├── services/
-│       │   │   └── api.js
-│       │   ├── hooks/
-│       │   │   ├── useEmployees.js
-│       │   │   └── useDepartments.js
-│       │   ├── App.js
-│       │   ├── App.css
-│       │   └── index.js
-│       ├── .env.local
-│       ├── package.json
-│       └── package-lock.json
-│
-└── docs/
-    ├── BACKEND_SETUP.md
-    ├── FRONTEND_SETUP.md
-    ├── DATABASE_SETUP.md
-    ├── API_DOCUMENTATION.md
-    ├── DATABASE_SCHEMA.md
-    └── EXAMPLE_FEATURES.md
-```
-
----
-
-## Running the Full Application
-
-### Terminal 1: Start Backend
-```bash
-cd backend/DotNetApi
-dotnet run
-# Runs on https://localhost:7000
-```
-
-### Terminal 2: Start Frontend
-```bash
-cd frontend/react-app
-npm start
-# Opens browser at http://localhost:3000
-```
-
-### Terminal 3: Optional - Monitor Database
-```bash
-psql -U app_user -d net_app_db
-```
-
----
-
-## Key Endpoints
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/api/employees` | Get all employees |
-| GET | `/api/employees/{id}` | Get employee by ID |
-| POST | `/api/employees` | Create new employee |
-| PUT | `/api/employees/{id}` | Update employee |
-| DELETE | `/api/employees/{id}` | Delete employee |
-| GET | `/api/departments` | Get all departments |
-| GET | `/api/departments/{id}` | Get department by ID |
-| POST | `/api/departments` | Create department |
-| PUT | `/api/departments/{id}` | Update department |
-| DELETE | `/api/departments/{id}` | Delete department |
-
----
-
-## Next Steps
-
-1. **Add Features**: See [EXAMPLE_FEATURES.md](./EXAMPLE_FEATURES.md)
-   - Search and filtering
-   - Pagination
-   - Salary statistics
-   - CSV export
-   - Authentication
-
-2. **Improve Performance**
-   - Add caching
-   - Implement query optimization
-   - Use async/await throughout
-
-3. **Deploy**
-   - Azure App Service (backend)
-   - Azure Static Web Apps (frontend)
-   - Azure Database for PostgreSQL
-
-4. **Testing**
-   - Unit tests (xUnit for .NET, Jest for React)
-   - Integration tests
-   - E2E tests
-
----
-
-## Useful Commands
-
-### Backend (.NET)
-```bash
-# Create migration
-dotnet ef migrations add MigrationName
-
-# Update database
-dotnet ef database update
-
-# Remove last migration
-dotnet ef migrations remove
-
-# Scaffold from database
-dotnet ef dbcontext scaffold
-
-# Watch mode (auto-rebuild)
-dotnet watch run
-```
-
-### Frontend (React)
-```bash
-# Install dependencies
-npm install
-
-# Start dev server
-npm start
-
-# Build for production
-npm run build
-
-# Run tests
-npm test
-
-# Eject configuration
-npm run eject
-```
-
-### Database (PostgreSQL)
-```bash
-# Backup database
-pg_dump -U app_user -d net_app_db > backup.sql
-
-# Restore database
-psql -U app_user -d net_app_db < backup.sql
-
-# Connect to database
-psql -U app_user -d net_app_db
-
-# Drop database
-dropdb -U app_user net_app_db
-
-# Create database
-createdb -U app_user net_app_db
-```
-
----
+**Next**: [Full Tutorials](../SETUP_GUIDE.md)
 
 ## Helpful Links
 
