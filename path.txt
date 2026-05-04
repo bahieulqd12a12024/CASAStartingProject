@@ -1,0 +1,233 @@
+ cd "../CASA #NET DEVELOPER/Project Beginner"
+ 
+
+
+Frontend
+  ↓
+ProductsController
+  ↓
+IProductService
+  ↓
+ProductService
+  ↓
+AppDbContext
+  ↓
+Database
+
+
+
+
+
+
+
+
+
+8 files changed
++114
+-86
+
+backend/DotNetApi/Controllers/ProductsController.cs
+backend/DotNetApi/Data/AppDbContext.cs
+backend/DotNetApi/Models/Product.cs
+backend/DotNetApi/Program.cs
+
+backend/DotNetApi/Controllers/ProductsController.cs
+backend/DotNetApi/DTOs/CreateProductDto.cs
+backend/DotNetApi/DTOs/ProductResponseDto.cs
+backend/DotNetApi/DTOs/UpdateProductDto.cs
+backend/DotNetApi/Models/Product.cs
+backend/DotNetApi/Program.cs
+backend/DotNetApi/Services/IProductService.cs
+backend/DotNetApi/Services/ProductService.cs
+
+
+
+
+
+
+
+
+
+The specific security improvement is: **users no longer send data directly into your database entity from the API controller**.
+
+Before, your controller accepted `Product` directly:
+
+```csharp
+public IActionResult Create([FromBody] Product product)
+```
+
+That means the request body became a database object.
+
+So if your `Product` entity later had sensitive/internal fields like:
+
+```csharp
+public bool IsDeleted { get; set; }
+public bool IsApproved { get; set; }
+public decimal InternalCost { get; set; }
+public int CreatedByUserId { get; set; }
+```
+
+An attacker could try sending:
+
+```json
+{
+  "name": "Fake Product",
+  "description": "Bad data",
+  "price": 0.01,
+  "isDeleted": false,
+  "isApproved": true,
+  "internalCost": 999999,
+  "createdByUserId": 1
+}
+```
+
+If your API accepts the entity directly, those extra values might accidentally be saved.
+
+After the refactor, your controller accepts this instead:
+
+```csharp
+public IActionResult Create([FromBody] CreateProductDto dto)
+```
+
+And `CreateProductDto` only allows:
+
+```csharp
+public string Name { get; set; } = string.Empty;
+public string Description { get; set; } = string.Empty;
+public decimal Price { get; set; }
+```
+
+Then in `ProductService.cs`, you manually choose what enters the database:
+
+```csharp
+var product = new Product
+{
+    Name = dto.Name,
+    Description = dto.Description,
+    Price = dto.Price
+};
+```
+
+That line is the security boundary.
+
+It means:
+
+```text
+Only Name, Description, and Price from the request are allowed into Product.
+```
+
+This protects against **over-posting** / **mass assignment** attacks.
+
+The second improvement is preventing accidental data leaks.
+
+Before, you returned the entity directly:
+
+```csharp
+return Ok(product);
+```
+
+After, the service returns:
+
+```csharp
+return ToResponseDto(product);
+```
+
+And this method controls what leaves your API:
+
+```csharp
+private static ProductResponseDto ToResponseDto(Product product)
+{
+    return new ProductResponseDto
+    {
+        Id = product.Id,
+        Name = product.Name,
+        Description = product.Description,
+        Price = product.Price
+    };
+}
+```
+
+This matters if your entity later contains private fields. For example:
+
+```csharp
+public string SupplierSecretNote { get; set; }
+public decimal InternalCost { get; set; }
+```
+
+Those fields would stay in the database entity, but they would not be returned unless you add them to `ProductResponseDto`.
+
+So the refactor improves security in two concrete ways:
+
+```text
+Request protection:
+DTOs prevent users from writing fields they should not control.
+
+Response protection:
+DTOs prevent your API from exposing fields users should not see.
+```
+
+For database attack vulnerability specifically:
+
+Your code already uses EF Core:
+
+```csharp
+_context.Products.Find(id);
+_context.Products.Add(product);
+```
+
+That helps against SQL injection because EF Core uses parameterized SQL for normal queries.
+
+The refactor does **not** mainly fix SQL injection. The SQL injection protection mostly comes from EF Core.
+
+The refactor mainly fixes this kind of database-related risk:
+
+```text
+Bad or malicious request body changes database fields directly.
+```
+
+Example attack prevented by DTOs:
+
+```json
+{
+  "id": 999,
+  "name": "Changed Product",
+  "description": "Trying to override id",
+  "price": 1
+}
+```
+
+With `CreateProductDto`, there is no `Id`, so users cannot decide the product ID during create.
+
+Another example:
+
+```json
+{
+  "name": "Product",
+  "description": "Product",
+  "price": 1,
+  "adminOnly": true
+}
+```
+
+If `adminOnly` is not in the DTO, it is ignored.
+
+But be honest with your manager: this does **not** make the API fully secure yet.
+
+Still missing:
+
+```text
+Authentication: Who is the user?
+Authorization: Are they allowed to create/update/delete?
+Validation: Is price valid? Is name too long?
+Rate limiting: Can someone spam the API?
+CORS restriction: Which frontend domains are allowed?
+Package updates: Npgsql vulnerability warning
+```
+
+Right now, anyone who can reach your API can still call:
+
+```http
+DELETE /api/products/1
+```
+
+So DTOs improve database safety, but authentication and authorization are needed to stop unauthorized users.
